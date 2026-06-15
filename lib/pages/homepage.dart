@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:convert';
+import 'dart:async'; // Required for StreamSubscription
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:geolocator/geolocator.dart';
@@ -15,6 +16,7 @@ import 'package:uum_net/pages/mapscreen.dart';
 import 'package:uum_net/pages/tablescreen.dart';
 import 'package:uum_net/pages/profilepage.dart';
 import 'package:uum_net/pages/chatpage.dart';
+import 'package:connectivity_plus/connectivity_plus.dart'; // Required to detect network switches
 
 // 1. THE MAIN CONTAINER
 class Homepage extends StatefulWidget {
@@ -109,6 +111,8 @@ class _SpeedTestViewState extends State<SpeedTestView>
   String dl = "--";
   String ul = "--";
   String dbm = "0";
+
+  late StreamSubscription<List<ConnectivityResult>> _connectivitySubscription;
 
   final List<Map<String, dynamic>> uumLocations = [
     // --- MICRO ZONES (0m - 25m Radius) ---
@@ -532,6 +536,26 @@ class _SpeedTestViewState extends State<SpeedTestView>
     },
   ];
 
+  @override
+  void initState() {
+    super.initState();
+    // Auto-detect the provider as soon as the screen loads
+    _autoDetectProvider();
+
+    // Start listening for network changes (e.g., user turns off WiFi)
+    _connectivitySubscription = Connectivity().onConnectivityChanged.listen((List<ConnectivityResult> result) {
+      // Re-run the detection when the hardware reports a network switch
+      _autoDetectProvider();
+    });
+  }
+
+  @override
+  void dispose() {
+    // Always cancel listeners when leaving the screen to save battery!
+    _connectivitySubscription.cancel();
+    super.dispose();
+  }
+
   // --- ADD THIS HELPER FUNCTION ---
   // This checks if the user is inside any of your custom zones
   String? _getCustomCampusLocation(double userLat, double userLng) {
@@ -565,132 +589,57 @@ class _SpeedTestViewState extends State<SpeedTestView>
     "Social Media",
   ];
 
-  void _showConnectionSelectionDialog() {
-    String? dialogSelectedTelco;
+  // --- NEW: AUTO DETECT NETWORK PROVIDER (LIKE OOKLA) ---
+ // --- NEW: AUTO DETECT NETWORK PROVIDER (LIKE OOKLA) ---
+  Future<void> _autoDetectProvider() async {
+    setState(() {
+      statusText = "Detecting network provider...";
+    });
 
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (BuildContext context) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            return AlertDialog(
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(20),
-              ),
-              title: const Row(
-                children: [
-                  Icon(Icons.wifi_find, color: Colors.deepPurple, size: 28),
-                  SizedBox(width: 10),
-                  Text(
-                    "Select Connection",
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                  ),
-                ],
-              ),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    "Please tell us what network you are using right now.",
-                    style: TextStyle(color: Colors.black54),
-                  ),
-                  const SizedBox(height: 20),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.grey.shade100,
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(
-                        color: Colors.deepPurple.shade200,
-                        width: 1.5,
-                      ),
-                    ),
-                    child: DropdownButtonHideUnderline(
-                      child: DropdownButton<String>(
-                        value: dialogSelectedTelco,
-                        hint: Text(
-                          "Select Provider",
-                          style: TextStyle(color: Colors.grey.shade600),
-                        ),
-                        isExpanded: true,
-                        icon: const Icon(
-                          Icons.keyboard_arrow_down,
-                          color: Colors.deepPurple,
-                        ),
-                        items:
-                            [
-                                  "UUM WiFi",
-                                  "Maxis",
-                                  "CelcomDigi",
-                                  "U Mobile",
-                                  "Unifi Mobile",
-                                  "Yes 4G",
-                                  "Other",
-                                ]
-                                .map(
-                                  (String value) => DropdownMenuItem(
-                                    value: value,
-                                    child: Text(
-                                      value,
-                                      style: const TextStyle(
-                                        fontWeight: FontWeight.w500,
-                                      ),
-                                    ),
-                                  ),
-                                )
-                                .toList(),
-                        onChanged: (val) {
-                          setDialogState(() {
-                            dialogSelectedTelco = val;
-                          });
-                        },
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(context).pop(),
-                  child: const Text(
-                    "Cancel",
-                    style: TextStyle(color: Colors.grey),
-                  ),
-                ),
-                ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.deepPurple,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    elevation: 0,
-                  ),
-                  onPressed: dialogSelectedTelco == null
-                      ? null
-                      : () {
-                          setState(() {
-                            selectedTelco = dialogSelectedTelco;
-                          });
-                          Navigator.of(context).pop();
-                        },
-                  child: const Text(
-                    "Confirm",
-                    style: TextStyle(color: Colors.white),
-                  ),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
+    try {
+      // Use a free IP-API to get ISP information
+      final response = await http.get(Uri.parse('http://ip-api.com/json/'));
+      
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        
+        // Convert to lowercase for easier matching
+        String ispName = data['isp']?.toString().toLowerCase() ?? '';
+        String orgName = data['org']?.toString().toLowerCase() ?? '';
+
+        String detectedTelco = "Other";
+
+        // Map the ISP name to your specific database labels
+        if (ispName.contains('universiti utara') || orgName.contains('universiti utara') || ispName.contains('uum')) {
+          detectedTelco = "UUM WiFi";
+        } else if (ispName.contains('maxis')) {
+          detectedTelco = "Maxis";
+        } else if (ispName.contains('celcom') || ispName.contains('digi')) {
+          detectedTelco = "CelcomDigi";
+        } else if (ispName.contains('u mobile')) {
+          detectedTelco = "U Mobile";
+        } else if (ispName.contains('telekom') || ispName.contains('unifi') || ispName.contains('tm')) {
+          detectedTelco = "Unifi Mobile";
+        } else if (ispName.contains('ytl') || ispName.contains('yes')) {
+          detectedTelco = "Yes 4G";
+        }
+
+        // Update the state with the auto-detected telco
+        setState(() {
+          selectedTelco = detectedTelco;
+          // --- UPDATED LINE BELOW ---
+          statusText = "Network provider detected: $detectedTelco"; 
+        });
+      }
+    } catch (e) {
+      print("Auto-detect failed: $e");
+      // If detection fails, default to "Other" so the test can still run
+      setState(() {
+        selectedTelco = "Other"; 
+        statusText = "Ready to test"; // Fallback text if it fails
+      });
+    }
   }
-
   // --- 1. FUNCTION TO CHECK INTERNET CONNECTION ---
   Future<bool> _hasInternet() async {
     try {
@@ -744,16 +693,18 @@ class _SpeedTestViewState extends State<SpeedTestView>
   }
 
   Future<void> startTest() async {
-    if (selectedTelco == null) {
-      _showConnectionSelectionDialog();
-      return;
-    }
-
-    // --- STEP 3: NEW INTERNET CHECK LOGIC STARTS HERE ---
     setState(() {
       isTesting = true;
-      statusText =
-          "Checking connection..."; // Changed to show it's checking internet first
+    });
+
+    // --- 1. AUTO-DETECT PROVIDER IF NOT SELECTED ---
+    if (selectedTelco == null) {
+      await _autoDetectProvider();
+    }
+
+    // --- 2. INTERNET CHECK LOGIC STARTS HERE ---
+    setState(() {
+      statusText = "Checking connection..."; 
     });
 
     bool hasInternet = await _hasInternet();
@@ -1455,7 +1406,7 @@ class _SpeedTestViewState extends State<SpeedTestView>
               // --- 1. TOP: NETWORK & ACTIVITY SELECTOR ---
               Row(
                 children: [
-                  // Network Dropdown
+                // Network Display (Auto-Detected, No Dropdown)
                   Expanded(
                     child: Container(
                       padding: const EdgeInsets.all(12),
@@ -1505,63 +1456,51 @@ class _SpeedTestViewState extends State<SpeedTestView>
                             ],
                           ),
                           const SizedBox(height: 10),
+                          
+                          // --- REPLACED DROPDOWN WITH STATIC DISPLAY ---
                           Container(
+                            width: double.infinity,
                             padding: const EdgeInsets.symmetric(
                               horizontal: 10,
-                              vertical: 8,
+                              vertical: 12, // Taller padding to match Activity dropdown height
                             ),
                             decoration: BoxDecoration(
                               color: Colors.grey.shade50,
                               borderRadius: BorderRadius.circular(10),
                               border: Border.all(color: Colors.grey.shade200),
                             ),
-                            child: DropdownButtonHideUnderline(
-                              child: DropdownButton<String>(
-                                value: selectedTelco,
-                                hint: const Text(
-                                  "Select...",
-                                  style: TextStyle(
-                                    color: Colors.deepPurple,
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.bold,
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    selectedTelco ?? "Detecting...",
+                                    style: TextStyle(
+                                      color: selectedTelco == null 
+                                          ? Colors.grey.shade600 
+                                          : Colors.black87,
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                    overflow: TextOverflow.ellipsis,
                                   ),
                                 ),
-                                isExpanded: true,
-                                isDense: true,
-                                dropdownColor: Colors.white,
-                                borderRadius: BorderRadius.circular(15),
-                                icon: const Icon(
-                                  Icons.keyboard_arrow_down_rounded,
-                                  color: Colors.deepPurple,
-                                  size: 20,
-                                ),
-                                items:
-                                    [
-                                          "UUM WiFi",
-                                          "Maxis",
-                                          "CelcomDigi",
-                                          "U Mobile",
-                                          "Unifi Mobile",
-                                          "Yes 4G",
-                                          "Other",
-                                        ]
-                                        .map(
-                                          (String value) => DropdownMenuItem(
-                                            value: value,
-                                            child: Text(
-                                              value,
-                                              style: const TextStyle(
-                                                fontWeight: FontWeight.bold,
-                                                fontSize: 13,
-                                                color: Colors.black87,
-                                              ),
-                                            ),
-                                          ),
-                                        )
-                                        .toList(),
-                                onChanged: (val) =>
-                                    setState(() => selectedTelco = val),
-                              ),
+                                if (selectedTelco == null)
+                                  const SizedBox(
+                                    height: 14,
+                                    width: 14,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: Colors.deepPurple,
+                                    ),
+                                  )
+                                else
+                                  Icon(
+                                    Icons.verified, // Gives a nice "auto-detected" feel
+                                    color: Colors.green.shade600,
+                                    size: 16,
+                                  ),
+                              ],
                             ),
                           ),
                         ],

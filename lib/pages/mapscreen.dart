@@ -5,6 +5,7 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:http/http.dart' as http;
 import 'package:geolocator/geolocator.dart';
+import 'package:flutter_map_marker_cluster/flutter_map_marker_cluster.dart';
 import 'package:uum_net/myconfig.dart';
 
 class MapScreen extends StatefulWidget {
@@ -21,7 +22,7 @@ class _MapScreenState extends State<MapScreen> {
   List<SignalPoint> signalData = [];
   bool isLoading = true;
 
-  // --- 1. NEW FILTER STATE (Default is UUM WiFi) ---
+  // --- 1. FILTER STATE ---
   String selectedTelco = "UUM WiFi";
   final List<String> telcoOptions = [
     "UUM WiFi",
@@ -61,11 +62,10 @@ class _MapScreenState extends State<MapScreen> {
     }
   }
 
-  // --- 2. UPDATED DATA FETCHING ---
+  // --- 2. DATA FETCHING ---
   Future<void> _loadHeatmapData() async {
     setState(() => isLoading = true);
     try {
-      // Pass the selected telco filter to the API
       final response = await http.get(
         Uri.parse(
           "${MyConfig.baseUrl}/get_heatmap_data.php?telco=$selectedTelco",
@@ -138,32 +138,7 @@ class _MapScreenState extends State<MapScreen> {
     return Colors.red;
   }
 
-  // --- 3. TAP DETECTION LOGIC ---
-  void _handleMapTap(double tapLat, double tapLng) {
-    if (signalData.isEmpty) return;
-
-    SignalPoint? closestPoint;
-    double minDistance = 80.0; // Check within 80 meters (radius of circles)
-
-    for (var p in signalData) {
-      double distance = Geolocator.distanceBetween(
-        tapLat,
-        tapLng,
-        p.lat,
-        p.long,
-      );
-      if (distance < minDistance) {
-        minDistance = distance;
-        closestPoint = p;
-      }
-    }
-
-    if (closestPoint != null) {
-      _showAreaDetails(closestPoint);
-    }
-  }
-
-  // --- 4. DETAILS BOTTOM SHEET ---
+  // --- 3. DETAILS BOTTOM SHEET ---
   void _showAreaDetails(SignalPoint p) {
     int score = _calculateScore(p);
     String qualityText = "Bad";
@@ -299,11 +274,8 @@ class _MapScreenState extends State<MapScreen> {
             mapController: _mapController,
             options: MapOptions(
               initialCenter: userLocation,
-              initialZoom: 15.0, // Zoomed in slightly to make tapping easier
-              onTap: (tapPosition, point) {
-                // Link tap to our handler
-                _handleMapTap(point.latitude, point.longitude);
-              },
+              initialZoom: 15.0, 
+              // We no longer need onTap here because each pin has its own precise detector!
             ),
             children: [
               TileLayer(
@@ -311,19 +283,67 @@ class _MapScreenState extends State<MapScreen> {
                 userAgentPackageName: 'com.example.uum_net',
               ),
 
-              CircleLayer(
-                circles: signalData.map((point) {
-                  int score = _calculateScore(point);
-                  return CircleMarker(
-                    point: LatLng(point.lat, point.long),
-                    radius: 80,
-                    useRadiusInMeter: true,
-                    color: _getScoreColor(score).withOpacity(0.65),
-                    borderStrokeWidth: 0,
-                  );
-                }).toList(),
+              // --- 4. NEW CLUSTER LAYER INSTEAD OF CIRCLES ---
+              MarkerClusterLayerWidget(
+                options: MarkerClusterLayerOptions(
+                  maxClusterRadius: 45, // How close pins need to be to group together
+                  size: const Size(40, 40),
+                  alignment: Alignment.center,
+                  padding: const EdgeInsets.all(50),
+                  maxZoom: 19,
+                  
+                  // Generate individual map pins
+                  markers: signalData.map((point) {
+                    int score = _calculateScore(point);
+                    Color markerColor = _getScoreColor(score);
+                    
+                    return Marker(
+                      point: LatLng(point.lat, point.long),
+                      width: 40,
+                      height: 40,
+                      child: GestureDetector(
+                        // Precise tap detection directly on the icon!
+                        onTap: () => _showAreaDetails(point),
+                        child: Icon(
+                          Icons.location_on,
+                          color: markerColor,
+                          size: 40,
+                        ),
+                      ),
+                    );
+                  }).toList(),
+                  
+                  // Design the bubble that holds grouped pins
+                  builder: (context, markers) {
+                    return Container(
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(20),
+                        color: Colors.deepPurple,
+                        border: Border.all(color: Colors.white, width: 2),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.deepPurple.withOpacity(0.5),
+                            blurRadius: 8,
+                            offset: const Offset(0, 3),
+                          )
+                        ]
+                      ),
+                      child: Center(
+                        child: Text(
+                          markers.length.toString(),
+                          style: const TextStyle(
+                            color: Colors.white, 
+                            fontWeight: FontWeight.bold,
+                            fontSize: 14,
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
               ),
 
+              // --- USER LOCATION MARKER ---
               MarkerLayer(
                 markers: [
                   Marker(
@@ -358,9 +378,9 @@ class _MapScreenState extends State<MapScreen> {
             ],
           ),
 
-          // --- 5. NEW FILTER BAR ---
+          // --- 5. FILTER BAR ---
           Positioned(
-            top: 20, // Adjust this if it hits the app bar
+            top: 20, 
             left: 0,
             right: 0,
             child: SizedBox(
@@ -523,7 +543,7 @@ class _MapScreenState extends State<MapScreen> {
   }
 }
 
-// --- 6. UPDATED SIGNAL POINT CLASS ---
+// --- 6. SIGNAL POINT CLASS ---
 class SignalPoint {
   final String locationName;
   final double lat, long, dl, ul;
