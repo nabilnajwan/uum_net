@@ -428,7 +428,7 @@ class _ProfilePageState extends State<ProfilePage> {
                         ),
                         const SizedBox(height: 5),
                         Text(
-                          "AI-generated insights based on your test history.",
+                          "Data-Driven Insights",
                           style: TextStyle(
                             color: Colors.grey.shade600,
                             fontSize: 13,
