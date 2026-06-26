@@ -140,7 +140,7 @@ class _SpeedTestViewState extends State<SpeedTestView>
       "name": "INASIS BANK RAKYAT",
       "lat": 6.441183919636562,
       "lng": 100.52811222121672,
-      "radius": 20,
+      "radius": 1000,
     },
     {
       "name": "INASIS SME BANK",
